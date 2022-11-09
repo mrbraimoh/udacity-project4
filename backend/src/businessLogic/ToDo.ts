@@ -1,54 +1,99 @@
-import * as uuid from 'uuid';
+
+
 import * as AWS from 'aws-sdk';
-import { TodoAccess } from '../dataLayer/todoAccess';
-import { getUserId } from '../utils/getJwt';
-import { TodoItem, TodoCreate, TodoUpdate } from '../models/Todo.d';
+import * as AWSXRay from 'aws-xray-sdk';
+import { createLogger } from '../utils/logger';
+import { DocumentClient } from 'aws-sdk/clients/dynamodb';
+import { TodoItem, TodoUpdate } from '../models/Todo.d';
 
-const todoAccess = new TodoAccess();
+const XAWS = AWSXRay.captureAWS(AWS);
+const logger = createLogger('todoAccess');
 
-export async function getTodos(jwtToken: string): Promise<TodoItem[]> {
-  const userId: string = getUserId(jwtToken);
-  return todoAccess.getTodos(userId);
-}
+export class TodoAccess {
+  constructor(
+    private readonly docClient: DocumentClient = new XAWS.DynamoDB.DocumentClient(),
+    private readonly todosTable = process.env.TODOS_TABLE
+  ) {}
 
-export async function getTodo(jwtToken: string, todoId: string): Promise<TodoItem> {
-  const userId: string = getUserId(jwtToken);
-  return todoAccess.getTodo(userId, todoId);
-}
+  async getTodos(userId: string): Promise<TodoItem[]> {
+    logger.info('Getting all todo items');
+    const result = await this.docClient
+      .query({
+        TableName: this.todosTable,
+        KeyConditionExpression: 'userId = :userId',
+        ExpressionAttributeValues: {
+          ':userId': userId
+        }
+      })
+      .promise();
+    return result.Items as TodoItem[];
+  }
+  
+  async createTodo(newTodo: TodoItem): Promise<TodoItem> {
+    logger.info(`Creating new todo item: ${newTodo.todoId}`);
+    await this.docClient
+      .put({
+        TableName: this.todosTable,
+        Item: newTodo
+      })
+      .promise();
+    return newTodo;
+  }
 
-export async function updateTodo(
-  jwtToken: string,
-  todoId: string,
-  updateData: TodoUpdate
-): Promise<void> {
-  const userId = getUserId(jwtToken);
-  return todoAccess.updateTodo(userId, todoId, updateData);
-}
+  async getTodo(userId: string, todoId: string): Promise<TodoItem> {
+    logger.info(`Getting todo item: ${todoId}`);
+    const result = await this.docClient
+      .query({
+        TableName: this.todosTable,
+        KeyConditionExpression: 'userId = :userId and todoId = :todoId',
+        ExpressionAttributeValues: {
+          ':userId': userId,
+          ':todoId': todoId
+        }
+      })
+      .promise();
+    const todoItem = result.Items[0];
+    return todoItem as TodoItem;
+  }
 
-export async function createTodo(jwtToken: string, newTodoData: TodoCreate): Promise<TodoItem> {
-  const todoId = uuid.v4();
-  const userId = getUserId(jwtToken);
-  const createdAt = new Date().toISOString();
-  const done = false;
-  const newTodo: TodoItem = { todoId, userId, createdAt, done, ...newTodoData };
-  return todoAccess.createTodo(newTodo);
-}
+  async updateTodo(userId: string, todoId: string, updateData: TodoUpdate): Promise<void> {
+    logger.info(`Updating a todo item: ${todoId}`);
+    await this.docClient
+      .update({
+        TableName: this.todosTable,
+        Key: { userId, todoId },
+        ConditionExpression: 'attribute_exists(todoId)',
+        UpdateExpression: 'set #n = :n, dueDate = :due, done = :dn',
+        ExpressionAttributeNames: { '#n': 'name' },
+        ExpressionAttributeValues: {
+          ':n': updateData.name,
+          ':due': updateData.dueDate,
+          ':dn': updateData.done
+        }
+      })
+      .promise();
+  }
+  
+  async saveImgUrl(userId: string, todoId: string, bucketName: string): Promise<void> {
+    await this.docClient
+      .update({
+        TableName: this.todosTable,
+        Key: { userId, todoId },
+        ConditionExpression: 'attribute_exists(todoId)',
+        UpdateExpression: 'set attachmentUrl = :attachmentUrl',
+        ExpressionAttributeValues: {
+          ':attachmentUrl': `https://${bucketName}.s3.amazonaws.com/${todoId}`
+        }
+      })
+      .promise();
+  }
 
-export async function generateUploadUrl(jwtToken: string, todoId: string): Promise<string> {
-  const userId = getUserId(jwtToken);
-  const bucketName = process.env.IMAGES_S3_BUCKET;
-  const urlExpiration = parseInt(process.env.SIGNED_URL_EXPIRATION, 10);
-  const s3 = new AWS.S3({ signatureVersion: 'v4' });
-  const signedUrl = s3.getSignedUrl('putObject', {
-    Bucket: bucketName,
-    Key: todoId,
-    Expires: urlExpiration
-  });
-  await todoAccess.saveImgUrl(userId, todoId, bucketName);
-  return signedUrl;
-}
-
-export async function deleteTodo(jwtToken: string, todoId: string): Promise<void> {
-  const userId = getUserId(jwtToken);
-  return todoAccess.deleteTodo(userId, todoId);
+  async deleteTodo(userId: string, todoId: string): Promise<void> {
+    await this.docClient
+      .delete({
+        TableName: this.todosTable,
+        Key: { userId, todoId }
+      })
+      .promise();
+  }
 }
