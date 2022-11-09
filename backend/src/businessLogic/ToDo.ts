@@ -16,15 +16,6 @@ export async function getTodo(jwtToken: string, todoId: string): Promise<TodoIte
   return todoAccess.getTodo(userId, todoId);
 }
 
-export async function createTodo(jwtToken: string, newTodoData: TodoCreate): Promise<TodoItem> {
-  const todoId = uuid.v4();
-  const userId = getUserId(jwtToken);
-  const createdAt = new Date().toISOString();
-  const done = false;
-  const newTodo: TodoItem = { todoId, userId, createdAt, done, ...newTodoData };
-  return todoAccess.createTodo(newTodo);
-}
-
 export async function updateTodo(
   jwtToken: string,
   todoId: string,
@@ -34,9 +25,13 @@ export async function updateTodo(
   return todoAccess.updateTodo(userId, todoId, updateData);
 }
 
-export async function deleteTodo(jwtToken: string, todoId: string): Promise<void> {
+export async function createTodo(jwtToken: string, newTodoData: TodoCreate): Promise<TodoItem> {
+  const todoId = uuid.v4();
   const userId = getUserId(jwtToken);
-  return todoAccess.deleteTodo(userId, todoId);
+  const createdAt = new Date().toISOString();
+  const done = false;
+  const newTodo: TodoItem = { todoId, userId, createdAt, done, ...newTodoData };
+  return todoAccess.createTodo(newTodo);
 }
 
 export async function generateUploadUrl(jwtToken: string, todoId: string): Promise<string> {
@@ -51,4 +46,9 @@ export async function generateUploadUrl(jwtToken: string, todoId: string): Promi
   });
   await todoAccess.saveImgUrl(userId, todoId, bucketName);
   return signedUrl;
+}
+
+export async function deleteTodo(jwtToken: string, todoId: string): Promise<void> {
+  const userId = getUserId(jwtToken);
+  return todoAccess.deleteTodo(userId, todoId);
 }
